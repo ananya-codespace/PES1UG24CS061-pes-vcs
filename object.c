@@ -118,7 +118,17 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     ObjectID hash;
     compute_hash(full, total_len, &hash);
 
-    // ===== STOP HERE =====
+	// ===== ADD STEP 3 HERE =====
+
+	char path[512];
+	object_path(&hash, path, sizeof(path));
+
+	// if object already exists, skip writing
+	if (object_exists(&hash)) {
+	    *id_out = hash;
+	    free(full);
+	    return 0;
+	}
 }
 
 // Read an object from the store.
