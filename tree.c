@@ -140,4 +140,7 @@ int tree_from_index(ObjectID *id_out) {
 	if (index_load(&index) != 0) {
 	    return -1;
 	}
+	
+	Tree root;
+	root.count = 0;
 }
