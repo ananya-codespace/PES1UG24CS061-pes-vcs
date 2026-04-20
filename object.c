@@ -129,6 +129,38 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 	    free(full);
 	    return 0;
 	}
+	
+	// create shard directory
+	char dir[512];
+	snprintf(dir, sizeof(dir), "%s/%.2s", OBJECTS_DIR, path + strlen(OBJECTS_DIR) + 1);
+	mkdir(dir, 0755);
+
+	// temp file path
+	char temp_path[512];
+	snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
+
+	// write to temp file
+	int fd = open(temp_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+	if (fd < 0) {
+	    free(full);
+	    return -1;
+	}
+
+	write(fd, full, total_len);
+	fsync(fd);
+	close(fd);	
+
+	// rename temp file → final path
+	rename(temp_path, path);
+	
+	// set output hash	
+	*id_out = hash;
+
+	// cleanup
+	free(full);
+
+	return 0;
+
 }
 
 // Read an object from the store.
