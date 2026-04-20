@@ -20,6 +20,8 @@
 #define INDEX_FILE ".pes/index"
 #define HEAD_FILE ".pes/HEAD"
 
+typedef struct Index Index;
+
 // ─── Object Types ────────────────────────────────────────────────────────────
 
 typedef enum {
@@ -57,5 +59,11 @@ static inline const char* pes_author(void) {
     const char *env = getenv("PES_AUTHOR");
     return (env && env[0]) ? env : DEFAULT_AUTHOR;
 }
+
+// Add these to pes.h if they aren't there:
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
+int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out);
+
+int tree_from_index(ObjectID *id_out);
 
 #endif // PES_H
