@@ -143,4 +143,19 @@ int tree_from_index(ObjectID *id_out) {
 	
 	Tree root;
 	root.count = 0;
+
+	for (int i = 0; i < index.count; i++) {
+ 		IndexEntry *entry = &index.entries[i];
+
+ 		TreeEntry *te = &root.entries[root.count++];
+
+		// copy file name (for now assume no folders)
+		strcpy(te->name, entry->path);
+
+		// set mode
+		te->mode = entry->mode;
+
+		// copy hash
+		te->hash = entry->id;
+}
 }
