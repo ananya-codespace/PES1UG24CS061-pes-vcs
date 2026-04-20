@@ -149,7 +149,7 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 	    return -1;
 	}
 
-	if (write(fd, full, total_len) != total_len) {
+	if ((size_t)write(fd, full, total_len) != total_len) {
 	    close(fd);
 	    free(full);
 	    return -1;
