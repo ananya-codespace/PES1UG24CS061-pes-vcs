@@ -95,8 +95,20 @@ int object_exists(const ObjectID *id) {
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
     // TODO: Implement
-    (void)type; (void)data; (void)len; (void)id_out;
-    return -1;
+	char header[64];
+	const char *type_str;
+
+	// convert enum to string
+	if (type == OBJ_BLOB) type_str = "blob";
+	else if (type == OBJ_TREE) type_str = "tree";
+	else type_str = "commit";
+
+	// build header: "type size"
+	int header_len = sprintf(header, "%s %zu", type_str, len);
+
+	// add null byte manually
+	header[header_len] = '\0';
+	header_len++; // include null byte
 }
 
 // Read an object from the store.
