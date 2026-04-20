@@ -600,3 +600,159 @@ The following questions cover filesystem concepts beyond the implementation scop
 - **Git Internals** (Pro Git book): https://git-scm.com/book/en/v2/Git-Internals-Plumbing-and-Porcelain
 - **Git from the inside out**: https://codewords.recurse.com/issues/two/git-from-the-inside-out
 - **The Git Parable**: https://tom.preston-werner.com/2009/05/19/the-git-parable.html
+
+
+---
+
+# Report
+
+## Screenshots
+
+### Phase 1
+
+**1A — Output of `./test_objects` showing all tests passing**  
+![1A](screenshots/1A.png)
+
+**1B — Sharded object directory structure**  
+![1B](screenshots/1B.png)
+
+### Phase 2
+
+**2A — Output of `./test_tree` showing all tests passing**  
+![2A](screenshots/2A.png)
+
+**2B — Raw tree object format (`xxd`)**  
+![2B](screenshots/2B.png)
+
+### Phase 3
+
+**3A — `pes init` → `pes add` → `pes status` sequence**  
+![3A](screenshots/3A.png)
+
+**3B — Contents of `.pes/index`**  
+![3B](screenshots/3B.png)
+
+### Phase 4
+
+**4A — Commit log with three commits**  
+![4A](screenshots/4A.png)
+
+**4B — File structure inside `.pes` showing object growth**  
+![4B](screenshots/4B.png)
+
+**4C — `HEAD` and branch reference**  
+![4C](screenshots/4C.png)
+
+### Final Integration Test
+
+**Final integration test output**  
+![Final 1](screenshots/final1.png)  
+![Final 2](screenshots/final2.png)
+
+---
+
+## Analysis Questions and Answers
+
+### Q5.1: A branch in Git is just a file in `.git/refs/heads/` containing a commit hash. Creating a branch is creating a file. Given this, how would you implement `pes checkout <branch>` — what files need to change in `.pes/`, and what must happen to the working directory? What makes this operation complex?
+
+To implement `pes checkout <branch>`, I would first check whether `.pes/refs/heads/<branch>` exists. If it exists, I would update `.pes/HEAD` so that it points to `ref: refs/heads/<branch>`. Then I would read the commit hash from that branch file, load the corresponding commit object, read its root tree, and reconstruct the working directory so that it exactly matches the tree of the target commit.
+
+The working directory update would involve:
+- creating files that exist in the target tree but not in the current working directory,
+- overwriting tracked files whose contents differ,
+- deleting tracked files that are not present in the target tree,
+- updating the index so it matches the checked-out tree.
+
+This operation is complex because checkout is not just changing one pointer in `.pes/`; it also changes many files in the working directory. The hard part is doing this safely when the user has local uncommitted changes. Checkout must avoid destroying user work, so it must detect conflicts before modifying files.
+
+---
+
+### Q5.2: When switching branches, the working directory must be updated to match the target branch's tree. If the user has uncommitted changes to a tracked file, and that file differs between branches, checkout must refuse. Describe how you would detect this "dirty working directory" conflict using only the index and the object store.
+
+I would detect a dirty working directory conflict by comparing three versions of each tracked file:
+
+1. the version recorded in the current index,  
+2. the actual file in the working directory,  
+3. the version stored in the target branch’s tree.
+
+First, for each path in the current index, I would compare the working directory file against the index entry. This can be done using metadata such as size and modification time, or more accurately by hashing the current file and comparing it with the blob hash stored in the index. If they differ, the file has uncommitted changes.
+
+Next, I would compare the target branch’s version of that file against the current branch/index version. If the target version is different and the working directory also has uncommitted modifications, then checkout would overwrite user changes. In that case, checkout must refuse.
+
+So the conflict condition is:
+- working directory file differs from the index, and
+- target branch’s file differs from the currently tracked version.
+
+If both are true, the checkout should stop and warn the user.
+
+---
+
+### Q5.3: "Detached HEAD" means HEAD contains a commit hash directly instead of a branch reference. What happens if you make commits in this state? How could a user recover those commits?
+
+In a detached HEAD state, `HEAD` points directly to a commit hash instead of a branch name. If the user makes new commits in this state, the commits are created normally, but no branch is updated to point to them. That means the commits exist in the object store, but they are not referenced by any branch.
+
+These commits can become hard to find later, because moving away from them leaves them unreachable from normal branch references. Over time, they may be garbage-collected if no reference points to them.
+
+A user can recover these commits by creating a branch that points to the detached commit, for example by making a new reference file under `.pes/refs/heads/` containing that commit hash. As long as the commit hash is known, recovery is possible.
+
+---
+
+### Q6.1: Over time, the object store accumulates unreachable objects — blobs, trees, or commits that no branch points to (directly or transitively). Describe an algorithm to find and delete these objects. What data structure would you use to track "reachable" hashes efficiently? For a repository with 100,000 commits and 50 branches, estimate how many objects you'd need to visit.
+
+A garbage collection algorithm would work in two phases: mark and sweep.
+
+**Mark phase:**
+1. Start from all branch heads in `.pes/refs/heads/`.
+2. For each branch head, read the commit object.
+3. Mark that commit hash as reachable.
+4. From each reachable commit:
+   - mark its tree object,
+   - mark its parent commit (if any),
+   - recursively traverse the parent chain.
+5. For each reachable tree:
+   - mark every referenced blob and subtree,
+   - recursively traverse subtrees.
+
+**Sweep phase:**
+1. Scan all files inside `.pes/objects/`.
+2. Any object hash not present in the reachable set is unreachable.
+3. Delete those unreachable object files.
+
+The best data structure for tracking reachable hashes is a **hash set**, because lookup and insertion are fast on average and hashes are fixed-size identifiers.
+
+For a repository with **100,000 commits and 50 branches**, the number of commits visited would usually still be around the number of unique commits, not 100,000 × 50, because many branches share history. So I would expect roughly:
+- up to **100,000 commit objects**,
+- plus one tree per commit in the worst case,
+- plus the blobs and subtrees referenced by those trees.
+
+So the traversal could easily visit **hundreds of thousands to millions of objects**, depending on repository size and file churn.
+
+---
+
+### Q6.2: Why is it dangerous to run garbage collection concurrently with a commit operation? Describe a race condition where GC could delete an object that a concurrent commit is about to reference. How does Git's real GC avoid this?
+
+Running garbage collection concurrently with commit creation is dangerous because a commit is built in stages. A new blob, tree, or commit object may already be written to the object store, but the branch reference may not yet have been updated. During that short window, the new object exists but is still unreachable from any branch.
+
+A race condition can happen like this:
+1. A commit operation writes a new tree object to `.pes/objects/`.
+2. Before the new commit object and branch reference are updated, GC starts scanning references.
+3. GC does not see any branch pointing to that new tree, so it concludes the tree is unreachable.
+4. GC deletes the tree object.
+5. The commit operation then writes a commit that refers to the deleted tree.
+
+This leaves the repository corrupted because the commit points to a missing object.
+
+Git avoids this using mechanisms such as:
+- locks around reference updates,
+- temporary files and atomic renames,
+- conservative garbage collection policies,
+- keeping newly created objects protected during ongoing operations,
+- usually avoiding aggressive deletion while concurrent operations may still be creating references.
+
+So the main issue is that “not yet referenced” does not always mean “safe to delete.”
+
+---
+
+## Conclusion
+
+This project implemented a simplified version control system inspired by Git. The system supports content-addressable object storage, tree construction, staging through an index, commit creation, and commit history traversal. The implementation demonstrates important operating system and filesystem concepts such as hashing, atomic writes, reference management, and persistent on-disk data structures. All phases were tested, and the full integration test completed successfully.
